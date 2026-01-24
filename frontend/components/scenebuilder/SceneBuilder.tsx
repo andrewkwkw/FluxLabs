@@ -227,9 +227,12 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
         const percent = Math.min(Math.max(0, x / rect.width), 1);
         const clip = clips[index];
         const duration = clipDurations[clip.id] || DEFAULT_CLIP_DURATION;
+        const trimStart = clip.trimStart || 0;
+        const trimEnd = clip.trimEnd !== undefined ? clip.trimEnd : duration;
+        const visibleDuration = trimEnd - trimStart;
 
-        // Fix: Scrubber should map to absolute time on the timeline (0 to duration), not relative to trim
-        const newTime = percent * duration;
+        // Fix: Scrubber maps to visible range in destructive mode
+        const newTime = trimStart + (percent * visibleDuration);
 
         setCurrentTime(newTime);
         if (videoRef.current) videoRef.current.currentTime = newTime;
@@ -242,11 +245,23 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
         const duration = clipDurations[clip.id] || DEFAULT_CLIP_DURATION;
         if (index !== activeClipIndex) setActiveClipIndex(index);
         setIsTrimming(type);
+
+        const trimStart = clip.trimStart || 0;
+        const trimEnd = clip.trimEnd !== undefined ? clip.trimEnd : duration;
+        const visibleDuration = trimEnd - trimStart;
+
         const clipElement = (e.target as HTMLElement).closest('.group\\/item');
         const rect = clipElement?.getBoundingClientRect();
         if (rect) {
-            console.log('[Trim Start]', { type, startX: e.clientX, rectWidth: rect.width, duration, initialTrimVal: type === 'start' ? (clip.trimStart || 0) : (clip.trimEnd !== undefined ? clip.trimEnd : duration) });
-            trimDragRef.current = { index, startX: e.clientX, initialTrimVal: type === 'start' ? (clip.trimStart || 0) : (clip.trimEnd !== undefined ? clip.trimEnd : duration), duration, rect };
+            console.log('[Trim Start]', { type, startX: e.clientX, rectWidth: rect.width, visibleDuration });
+            // Store VISIBLE duration for delta calculation
+            trimDragRef.current = {
+                index,
+                startX: e.clientX,
+                initialTrimVal: type === 'start' ? trimStart : trimEnd,
+                duration: visibleDuration, // Using visible duration for math
+                rect
+            };
         }
         if (isPlaying) { setIsPlaying(false); videoRef.current?.pause(); }
     };
@@ -257,32 +272,34 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                 updateScrubber(e.clientX, dragTargetRef.current.rect, dragTargetRef.current.index);
             }
             if (isTrimming && trimDragRef.current) {
-                const { index, initialTrimVal, duration, rect } = trimDragRef.current;
+                const { index, initialTrimVal, duration: startVisibleDuration, rect } = trimDragRef.current;
                 const clip = clips[index];
+                const realDuration = clipDurations[clip.id] || DEFAULT_CLIP_DURATION;
+
                 const deltaX = e.clientX - trimDragRef.current.startX;
 
-                // Fix: Delta time should be based on TOTAL duration, because the card width represents the total duration
-                const deltaTime = (deltaX / rect.width) * duration;
+                // Math: Ratio of change relative to the STARTING visible width/duration
+                const deltaTime = (deltaX / rect.width) * startVisibleDuration;
 
                 let newVal = initialTrimVal + deltaTime;
-                console.log('[Trim Move]', { deltaX, deltaTime, newVal, initialTrimVal });
 
                 if (isTrimming === 'start') {
-                    const end = clip.trimEnd !== undefined ? clip.trimEnd : duration;
-                    newVal = Math.max(0, Math.min(newVal, end - 0.5)); // Ensure min 0.5s duration
+                    const end = clip.trimEnd !== undefined ? clip.trimEnd : realDuration;
+                    newVal = Math.max(0, Math.min(newVal, end - 0.5));
                 } else {
                     const start = clip.trimStart || 0;
-                    newVal = Math.max(start + 0.5, Math.min(newVal, duration)); // Ensure min 0.5s duration
+                    newVal = Math.max(start + 0.5, Math.min(newVal, realDuration));
                 }
 
-                const newClips = [...clips];
-                if (isTrimming === 'start') newClips[index] = { ...clip, trimStart: newVal };
-                else newClips[index] = { ...clip, trimEnd: newVal };
+                if (Math.abs(newVal - (isTrimming === 'start' ? (clip.trimStart || 0) : (clip.trimEnd || realDuration))) > 0.05) {
+                    const newClips = [...clips];
+                    if (isTrimming === 'start') newClips[index] = { ...clip, trimStart: newVal };
+                    else newClips[index] = { ...clip, trimEnd: newVal };
 
-                // Optimized: Only update state if value changed significantly to avoid spamming re-renders
-                if (Math.abs(newVal - (isTrimming === 'start' ? (clip.trimStart || 0) : (clip.trimEnd || duration))) > 0.05) {
+                    // Update current time to the trim point for feedback
                     setCurrentTime(newVal);
                     if (videoRef.current) videoRef.current.currentTime = newVal;
+
                     setClips(newClips);
                     onUpdateClips(newClips);
                 }
@@ -320,7 +337,7 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
         extend: (clip: VideoTask) => {
             setExtensionClip(clip);
             setExtensionMode('extend');
-            setIsExtending(clip.id); // Set isExtending to the clip's ID
+            setIsExtending(clip.id);
             setActiveMenuClipId(null);
             setTimeout(() => document.querySelector('textarea')?.focus(), 100);
         },
@@ -332,6 +349,9 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
             if (activeClipIndex >= updated.length) setActiveClipIndex(Math.max(0, updated.length - 1));
         }
     };
+
+    // Constants for visual representation
+    const BASE_WIDTH_PX = 224; // Equivalent to w-56 (14rem)
 
     // From useSceneBuilderState
     const handlePlayheadPlusClick = (e: React.MouseEvent) => {
@@ -582,7 +602,7 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
     return (
         <div className="flex flex-col h-[100dvh] bg-[#0a0a0a] text-white overflow-hidden">
 
-            {/* --- HEADER (from SceneBuilderHeader.tsx) --- */}
+            {/* ... (Header same) ... */}
             <header className="h-14 shrink-0 border-b border-white/10 flex items-center justify-between px-4 bg-[#0a0a0a] z-50">
                 <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
                     <button onClick={onBack} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition shrink-0">
@@ -692,7 +712,7 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                 <div className={`shrink-0 bg-[#0a0a0a] border-t border-white/10 flex flex-col z-30 transition-opacity ${isRendering ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
 
                     {/* 1. Playback Controls Row (from PlaybackControls.tsx) */}
-                    <div className="h-12 md:h-14 flex items-center justify-between px-4 md:px-6 border-b border-white/5 bg-[#0e0e0e]">
+                    <div className="h-12 md:h-14 flex items-center justify-center px-4 md:px-6 border-b border-white/5 bg-[#0e0e0e] relative">
                         <div className="flex items-center gap-4">
                             <button
                                 onClick={togglePlay}
@@ -708,7 +728,7 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-2 md:gap-4 text-gray-400">
+                        <div className="absolute right-4 flex items-center gap-2 md:gap-4 text-gray-400">
                             <button
                                 onClick={handleDownload}
                                 className={`p-2 hover:bg-white/10 rounded-full transition ${!activeClip || activeClip.status !== GenerationStatus.COMPLETED ? 'opacity-30 cursor-not-allowed' : 'hover:text-white'}`}
@@ -717,8 +737,6 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                             >
                                 {isRendering ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
                             </button>
-                            <button className="hidden md:block p-2 hover:bg-white/10 rounded-full hover:text-white transition"><Settings2 size={20} /></button>
-                            <button className="p-2 hover:bg-white/10 rounded-full hover:text-white transition"><Maximize size={20} /></button>
                         </div>
                     </div>
 
@@ -733,12 +751,14 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                             const clipDuration = clipDurations[clip.id] || DEFAULT_CLIP_DURATION;
                             const trimStart = clip.trimStart || 0;
                             const trimEnd = clip.trimEnd !== undefined ? clip.trimEnd : clipDuration;
+                            const visibleDuration = trimEnd - trimStart;
 
-                            // Calculate percentage positions for trim visualization
-                            const startPercent = (trimStart / clipDuration) * 100;
-                            const endPercent = (trimEnd / clipDuration) * 100;
+                            // Destructive Mode Calculations
+                            const FULL_WIDTH = 224; // Reference max width
+                            const visibleRatio = visibleDuration / clipDuration;
+                            const clipWidth = FULL_WIDTH * visibleRatio;
+                            const shiftLeft = (trimStart / clipDuration) * FULL_WIDTH;
 
-                            // Clip Component (inlined from Clip.tsx)
                             return (
                                 <div
                                     key={clip.id}
@@ -747,83 +767,68 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                                     onMouseLeave={() => setHoveredClipId(null)}
                                 >
                                     <div
-                                        className={`relative w-36 h-20 md:w-56 md:h-32 cursor-pointer transition-all select-none clip-container`}
+                                        className={`relative h-20 md:h-32 cursor-pointer transition-all select-none overflow-hidden rounded-lg border-2 ${isClipActive ? 'border-orange-500' : 'border-gray-800 group-hover/item:border-gray-600'}`}
+                                        style={{ width: `${Math.max(40, clipWidth)}px` }} // Min width to prevent collapse
                                         onMouseDown={(e) => handleClipScrubberMouseDown(e, idx)}
                                     >
-                                        {/* Image Container */}
-                                        <div className={`w-full h-full overflow-hidden rounded-lg border-2 ${isClipActive ? 'border-orange-500' : 'border-gray-800 group-hover/item:border-gray-600'}`}>
-                                            {/* Thumbnail */}
+                                        {/* Inner Image Container - Shifted to hide trimmed start */}
+                                        <div
+                                            className="absolute top-0 bottom-0 pointer-events-none"
+                                            style={{ width: `${FULL_WIDTH}px`, transform: `translateX(-${shiftLeft}px)` }}
+                                        >
                                             {clip.thumbnailUrl ? (
-                                                <img src={clip.thumbnailUrl} className="w-full h-full object-cover pointer-events-none" loading="lazy" />
+                                                <img src={clip.thumbnailUrl} className="w-full h-full object-cover" loading="lazy" />
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center bg-zinc-900">
-                                                    <div className="animate-spin h-4 w-4 md:h-6 md:w-6 border-2 border-orange-500 border-t-transparent rounded-full"></div>
+                                                    <div className="animate-spin h-4 w-4 border-2 border-orange-500 border-t-transparent rounded-full"></div>
                                                 </div>
                                             )}
-
                                             {/* Dark overlay for inactive clips */}
                                             {!isClipActive && <div className="absolute inset-0 bg-black/30 group-hover/item:bg-transparent transition-colors"></div>}
                                         </div>
 
-                                        {/* --- TRIM & PLAYHEAD OVERLAYS (Only on Active Clip) --- */}
+                                        {/* --- HANDLES & PLAYHEAD (Directly on Container, pinned to edges) --- */}
                                         {isClipActive && (
                                             <>
-                                                {/* Trim Frame & Handles */}
+                                                {/* Left Handle */}
                                                 <div
-                                                    className="absolute top-0 bottom-0 border-y-2 border-white/50 z-20 pointer-events-none"
-                                                    style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%` }}
+                                                    className="absolute left-0 top-0 bottom-0 w-4 -ml-2 hover:ml-0 transition-all z-20 cursor-ew-resize flex items-center justify-start pl-1 group/handle"
+                                                    onMouseDown={(e) => handleTrimMouseDown(e, idx, 'start')}
                                                 >
-                                                    {/* Left Handle */}
-                                                    <div
-                                                        className="absolute -left-[5px] top-1/2 -translate-y-1/2 h-full w-4 cursor-ew-resize flex items-center justify-center pointer-events-auto group/handle"
-                                                        onMouseDown={(e) => handleTrimMouseDown(e, idx, 'start')}
-                                                    >
-                                                        {/* Visual bar */}
-                                                        <div className="h-full w-1.5 bg-white rounded-full group-hover/handle:bg-teal-400 transition-colors shadow-lg"></div>
-                                                        {/* Inner icon/grip */}
-                                                        <div className="absolute h-4 w-[1px] bg-black/30"></div>
-                                                    </div>
-
-                                                    {/* Right Handle */}
-                                                    <div
-                                                        className="absolute -right-[5px] top-1/2 -translate-y-1/2 h-full w-4 cursor-ew-resize flex items-center justify-center pointer-events-auto group/handle"
-                                                        onMouseDown={(e) => handleTrimMouseDown(e, idx, 'end')}
-                                                    >
-                                                        <div className="h-full w-1.5 bg-white rounded-full group-hover/handle:bg-teal-400 transition-colors shadow-lg"></div>
-                                                        <div className="absolute h-4 w-[1px] bg-black/30"></div>
-                                                    </div>
+                                                    <div className="h-full w-1.5 bg-white rounded-full shadow-lg group-hover/handle:bg-teal-400 transition-colors"></div>
                                                 </div>
 
-                                                {/* Playhead (Restricted to visible area logic handled by js, visual absolute) */}
+                                                {/* Right Handle */}
                                                 <div
-                                                    className="absolute top-[-10px] bottom-[-10px] z-30 pointer-events-none"
-                                                    style={{ left: `${(currentTime / clipDuration) * 100}%` }}
+                                                    className="absolute right-0 top-0 bottom-0 w-4 -mr-2 hover:mr-0 transition-all z-20 cursor-ew-resize flex items-center justify-end pr-1 group/handle"
+                                                    onMouseDown={(e) => handleTrimMouseDown(e, idx, 'end')}
                                                 >
-                                                    {/* Line */}
-                                                    <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white shadow-[0_0_4px_rgba(0,0,0,0.5)] transform -translate-x-1/2"></div>
+                                                    <div className="h-full w-1.5 bg-white rounded-full shadow-lg group-hover/handle:bg-teal-400 transition-colors"></div>
+                                                </div>
 
-                                                    {/* Top Handle: Circle + */}
+                                                {/* Playhead */}
+                                                <div
+                                                    className="absolute top-[-10px] bottom-[-10px] z-10 pointer-events-none"
+                                                    style={{ left: `${((currentTime - trimStart) / visibleDuration) * 100}%` }}
+                                                >
+                                                    <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white shadow-md transform -translate-x-1/2"></div>
                                                     <div className="absolute -top-1.5 left-0 transform -translate-x-1/2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-md">
                                                         <Plus size={14} className="text-black" strokeWidth={3} />
                                                     </div>
-
-                                                    {/* Bottom Handle: Triangle (pointing up) */}
-                                                    <div className="absolute -bottom-1.5 left-0 transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[8px] border-b-white"></div>
                                                 </div>
                                             </>
                                         )}
                                     </div>
 
-                                    {/* --- MENU TRIGGER BUTTON --- */}
+                                    {/* ... Menu Button ... */}
                                     {(hoveredClipId === clip.id || activeMenuClipId === clip.id) && (
                                         <button
                                             onClick={(e) => handleMenuActions.open(e, clip.id)}
-                                            className="absolute -top-3 right-2 bg-white text-black p-1.5 rounded-full shadow-lg z-20 hover:bg-gray-200 transition-transform hover:scale-110"
+                                            className="absolute -top-3 right-0 bg-white text-black p-1.5 rounded-full shadow-lg z-20 hover:bg-gray-200"
                                         >
                                             <MoreVertical size={14} />
                                         </button>
                                     )}
-
                                     {/* --- CONTEXT MENU POPUP --- */}
                                     {activeMenuClipId === clip.id && (
                                         <div
@@ -863,46 +868,27 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                         })}
 
                         {/* ADD BUTTON */}
+                        {/* ADD BUTTONS */}
                         <button
-                            onClick={handlePlayheadPlusClick} // Changed to use the state hook's function
-                            className="flex-shrink-0 w-12 h-20 md:w-16 md:h-32 rounded-lg bg-[#141414] border border-dashed border-gray-700 hover:border-gray-500 hover:bg-[#1a1a1a] flex flex-col items-center justify-center transition text-gray-500 hover:text-white gap-2 group"
-                            title="Tambah Video"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="h-20 md:h-32 min-w-[120px] ml-2 border border-dashed border-white/10 hover:border-white/20 hover:bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-gray-300 transition flex-shrink-0"
                         >
-                            <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-[#222] group-hover:bg-[#333] flex items-center justify-center transition-colors">
-                                <Plus size={18} />
-                            </div>
+                            <ImageIcon size={20} />
+                            <span className="text-xs font-medium text-center">Gambar<br />ke Video</span>
                         </button>
-                        {/* Playhead menu (from Timeline.tsx) */}
-                        {showPlayheadMenu && (
-                            <div
-                                ref={playheadMenuRef}
-                                className="absolute -top-32 right-[-20px] w-48 bg-[#1a1a1a] rounded-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
-                            >
-                                <div className="p-1">
-                                    <button
-                                        onClick={() => handlePlayheadMenuAction('jump')}
-                                        className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
-                                    >
-                                        <ImageIcon size={16} className="text-gray-400" />
-                                        Mulai dengan Gambar
-                                    </button>
-                                    <button
-                                        onClick={() => handlePlayheadMenuAction('extend')}
-                                        className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
-                                    >
-                                        <ArrowRightFromLine size={16} className="text-gray-400" />
-                                        Perpanjang dari Playhead
-                                    </button>
-                                </div>
-                                <div className="absolute bottom-[-6px] right-8 w-3 h-3 bg-[#1a1a1a] border-r border-b border-white/10 transform rotate-45"></div>
-                            </div>
-                        )}
 
+                        <button
+                            onClick={() => handlePlayheadMenuAction('extend')}
+                            className="h-20 md:h-32 min-w-[120px] border border-dashed border-white/10 hover:border-white/20 hover:bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-gray-300 transition flex-shrink-0"
+                        >
+                            <ArrowRightFromLine size={20} />
+                            <span className="text-xs font-medium text-center">Perpanjang<br />Scene</span>
+                        </button>
                     </div>
                 </div>
 
                 {/* --- PROMPT INPUT (from SceneBuilderPromptInput.tsx) --- */}
-                <div className="shrink-0 w-full bg-[#050505] p-2 md:p-4 border-t border-white/5">
+                < div className="shrink-0 w-full bg-[#050505] p-2 md:p-4 border-t border-white/5" >
                     <div className="max-w-4xl mx-auto relative h-28 md:h-32">
                         {/* Position relative to contain the PromptInput properly */}
                         <div className="absolute inset-0 top-2 md:top-4">
@@ -1129,8 +1115,8 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                         <p className="text-center text-[10px] text-gray-600">Flow dapat membuat kesalahan, jadi periksa kembali output-nya</p>
                     </div>
 
-                </div>
-            </div>
-        </div>
+                </div >
+            </div >
+        </div >
     );
 };
