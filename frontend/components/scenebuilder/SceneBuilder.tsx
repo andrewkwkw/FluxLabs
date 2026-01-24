@@ -42,6 +42,7 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
     const [generatingThumbnails, setGeneratingThumbnails] = useState<{ [clipId: string]: boolean }>({});
     const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
     const [activeMenuClipId, setActiveMenuClipId] = useState<string | null>(null);
+    const [menuPosition, setMenuPosition] = useState<{ top: number, left: number } | null>(null);
     const [extensionClip, setExtensionClip] = useState<VideoTask | null>(null);
     const [extensionMode, setExtensionMode] = useState<'jump' | 'extend' | null>(null);
     const [showPlayheadMenu, setShowPlayheadMenu] = useState(false);
@@ -332,7 +333,16 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
     };
 
     const handleMenuActions = {
-        open: (e: React.MouseEvent, clipId: string) => { e.stopPropagation(); setActiveMenuClipId(activeMenuClipId === clipId ? null : clipId); },
+        open: (e: React.MouseEvent, clipId: string) => {
+            e.stopPropagation();
+            if (activeMenuClipId === clipId) {
+                setActiveMenuClipId(null);
+            } else {
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                setMenuPosition({ top: rect.top, left: rect.right });
+                setActiveMenuClipId(clipId);
+            }
+        },
         jump: (index: number) => { setActiveClipIndex(index); setActiveMenuClipId(null); },
         extend: (clip: VideoTask) => {
             setExtensionClip(clip);
@@ -742,7 +752,8 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
 
                     {/* 2. Storyboard / Clips Strip (from Timeline.tsx and Clip.tsx) */}
                     <div
-                        className="flex items-center gap-3 overflow-x-auto p-3 md:p-5 no-scrollbar bg-[#0a0a0a] min-h-[140px] items-start"
+                        className="flex items-center gap-3 overflow-hidden p-3 md:p-4 no-scrollbar bg-[#0a0a0a] min-h-[100px] items-start"
+                        onScroll={() => setActiveMenuClipId(null)}
                     >
 
                         {/* Clips List */}
@@ -767,27 +778,29 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                                     onMouseLeave={() => setHoveredClipId(null)}
                                 >
                                     <div
-                                        className={`relative h-20 md:h-32 cursor-pointer transition-all select-none overflow-hidden rounded-lg border-2 ${isClipActive ? 'border-orange-500' : 'border-gray-800 group-hover/item:border-gray-600'}`}
+                                        className="relative h-16 md:h-24 cursor-pointer transition-all select-none group/container"
                                         style={{ width: `${Math.max(40, clipWidth)}px` }} // Min width to prevent collapse
                                         onMouseDown={(e) => handleClipScrubberMouseDown(e, idx)}
                                     >
-                                        {/* Inner Image Container - Shifted to hide trimmed start */}
-                                        <div
-                                            className="absolute top-0 bottom-0 pointer-events-none"
-                                            style={{ width: `${FULL_WIDTH}px`, transform: `translateX(-${shiftLeft}px)` }}
-                                        >
-                                            {clip.thumbnailUrl ? (
-                                                <img src={clip.thumbnailUrl} className="w-full h-full object-cover" loading="lazy" />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center bg-zinc-900">
-                                                    <div className="animate-spin h-4 w-4 border-2 border-orange-500 border-t-transparent rounded-full"></div>
-                                                </div>
-                                            )}
-                                            {/* Dark overlay for inactive clips */}
-                                            {!isClipActive && <div className="absolute inset-0 bg-black/30 group-hover/item:bg-transparent transition-colors"></div>}
+                                        {/* Inner Image Container (Clipped & Bordered) */}
+                                        <div className={`absolute inset-0 overflow-hidden rounded-lg border-2 ${isClipActive ? 'border-orange-500' : 'border-gray-800 group-hover/item:border-gray-600'}`}>
+                                            <div
+                                                className="absolute top-0 bottom-0 pointer-events-none"
+                                                style={{ width: `${FULL_WIDTH}px`, transform: `translateX(-${shiftLeft}px)` }}
+                                            >
+                                                {clip.thumbnailUrl ? (
+                                                    <img src={clip.thumbnailUrl} className="w-full h-full object-cover" loading="lazy" />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+                                                        <div className="animate-spin h-4 w-4 border-2 border-orange-500 border-t-transparent rounded-full"></div>
+                                                    </div>
+                                                )}
+                                                {/* Dark overlay for inactive clips */}
+                                                {!isClipActive && <div className="absolute inset-0 bg-black/30 group-hover/item:bg-transparent transition-colors"></div>}
+                                            </div>
                                         </div>
 
-                                        {/* --- HANDLES & PLAYHEAD (Directly on Container, pinned to edges) --- */}
+                                        {/* --- HANDLES & PLAYHEAD (Overlay, Unclipped) --- */}
                                         {isClipActive && (
                                             <>
                                                 {/* Left Handle */}
@@ -808,13 +821,11 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
 
                                                 {/* Playhead */}
                                                 <div
-                                                    className="absolute top-[-10px] bottom-[-10px] z-10 pointer-events-none"
+                                                    className="absolute top-[-24px] bottom-[-24px] z-30 pointer-events-none"
                                                     style={{ left: `${((currentTime - trimStart) / visibleDuration) * 100}%` }}
                                                 >
-                                                    <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white shadow-md transform -translate-x-1/2"></div>
-                                                    <div className="absolute -top-1.5 left-0 transform -translate-x-1/2 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-md">
-                                                        <Plus size={14} className="text-black" strokeWidth={3} />
-                                                    </div>
+                                                    {/* Vertical White Line */}
+                                                    <div className="absolute top-0 bottom-0 left-0 w-[3px] bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)] transform -translate-x-1/2 rounded-full"></div>
                                                 </div>
                                             </>
                                         )}
@@ -829,61 +840,12 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
                                             <MoreVertical size={14} />
                                         </button>
                                     )}
-                                    {/* --- CONTEXT MENU POPUP --- */}
-                                    {activeMenuClipId === clip.id && (
-                                        <div
-                                            ref={menuRef}
-                                            className="absolute -top-32 right-[-20px] w-48 bg-[#1a1a1a] rounded-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
-                                        >
-                                            <div className="p-1">
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleMenuActions.jump(idx); }}
-                                                    className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
-                                                >
-                                                    <CornerUpRight size={16} className="text-gray-400" />
-                                                    Lompat ke...
-                                                </button>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleMenuActions.extend(clip); }}
-                                                    className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
-                                                >
-                                                    <ArrowRightFromLine size={16} className="text-gray-400" />
-                                                    Perpanjang...
-                                                </button>
-                                                <div className="h-[1px] bg-white/5 my-1"></div>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleMenuActions.delete(clip.id); }}
-                                                    className="w-full text-left px-3 py-2.5 text-sm text-red-400 hover:bg-red-500/10 rounded-lg flex items-center gap-3 transition"
-                                                >
-                                                    <Trash2 size={16} />
-                                                    Hapus
-                                                </button>
-                                            </div>
-                                            {/* Triangle pointer */}
-                                            <div className="absolute bottom-[-6px] right-8 w-3 h-3 bg-[#1a1a1a] border-r border-b border-white/10 transform rotate-45"></div>
-                                        </div>
-                                    )}
+                                    {/* --- CONTEXT MENU MOVED TO ROOT --- */}
                                 </div>
                             );
                         })}
 
-                        {/* ADD BUTTON */}
-                        {/* ADD BUTTONS */}
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            className="h-20 md:h-32 min-w-[120px] ml-2 border border-dashed border-white/10 hover:border-white/20 hover:bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-gray-300 transition flex-shrink-0"
-                        >
-                            <ImageIcon size={20} />
-                            <span className="text-xs font-medium text-center">Gambar<br />ke Video</span>
-                        </button>
 
-                        <button
-                            onClick={() => handlePlayheadMenuAction('extend')}
-                            className="h-20 md:h-32 min-w-[120px] border border-dashed border-white/10 hover:border-white/20 hover:bg-white/5 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-gray-300 transition flex-shrink-0"
-                        >
-                            <ArrowRightFromLine size={20} />
-                            <span className="text-xs font-medium text-center">Perpanjang<br />Scene</span>
-                        </button>
                     </div>
                 </div>
 
@@ -1117,6 +1079,69 @@ export const SceneBuilder: React.FC<SceneBuilderProps> = ({
 
                 </div >
             </div >
+
+            {/* --- FLOATING CONTEXT MENU (FIXED POSITION) --- */}
+            {activeMenuClipId && menuPosition && (() => {
+                const clipIndex = clips.findIndex(c => c.id === activeMenuClipId);
+                const clip = clips[clipIndex];
+                if (!clip) return null;
+
+                return (
+                    <div
+                        ref={menuRef}
+                        className="fixed w-48 bg-[#1a1a1a] rounded-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] z-[100] overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200"
+                        style={{
+                            top: menuPosition.top - 10,
+                            left: menuPosition.left + 5,
+                            transform: 'translate(-100%, -100%)'
+                        }}
+                    >
+                        <div className="p-1">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleMenuActions.jump(clipIndex); }}
+                                className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
+                            >
+                                <CornerUpRight size={16} className="text-gray-400" />
+                                Lompat ke...
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleMenuActions.extend(clip); }}
+                                className="w-full text-left px-3 py-2.5 text-sm text-gray-200 hover:bg-white/10 rounded-lg flex items-center gap-3 transition"
+                            >
+                                <ArrowRightFromLine size={16} className="text-gray-400" />
+                                Perpanjang...
+                            </button>
+                            <div className="h-[1px] bg-white/5 my-1"></div>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); handleMenuActions.delete(clip.id); }}
+                                className="w-full text-left px-3 py-2.5 text-sm text-red-400 hover:bg-red-500/10 rounded-lg flex items-center gap-3 transition"
+                            >
+                                <Trash2 size={16} />
+                                Hapus
+                            </button>
+                        </div>
+                        {/* Triangle pointer */}
+                        <div className="absolute bottom-[-6px] right-5 w-3 h-3 bg-[#1a1a1a] border-r border-b border-white/10 transform rotate-45"></div>
+                    </div>
+                );
+            })()}
+
+            {/* --- FLOATING PLAYHEAD MENU --- */}
+            {showPlayheadMenu && playheadMenuRef && (
+                <div
+                    className="fixed bottom-56 left-1/2 -translate-x-1/2 w-48 bg-[#1a1a1a] rounded-xl border border-white/10 shadow-2xl p-1 z-[60] animate-in slide-in-from-bottom-2 fade-in duration-200"
+                    ref={playheadMenuRef}
+                >
+                    <button onClick={() => { setShowPlayheadMenu(false); fileInputRef.current?.click(); }} className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-white/10 rounded-lg flex items-center gap-2 mb-1">
+                        <ImageIcon size={14} className="text-gray-500" /> Mulai dengan Gambar
+                    </button>
+                    <button onClick={() => handlePlayheadMenuAction('extend')} className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-white/10 rounded-lg flex items-center gap-2">
+                        <ArrowRightFromLine size={14} className="text-gray-500" /> Perpanjang Scene
+                    </button>
+                    {/* Arrow down */}
+                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-[#1a1a1a] border-r border-b border-white/10 rotate-45"></div>
+                </div>
+            )}
         </div >
     );
 };
